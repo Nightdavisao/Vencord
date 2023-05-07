@@ -17,9 +17,12 @@
 */
 
 import { debounce } from "@utils/debounce";
-import { makeCodeblock } from "@utils/misc";
+import { Margins } from "@utils/margins";
+import { canonicalizeMatch, canonicalizeReplace } from "@utils/patches";
+import { makeCodeblock } from "@utils/text";
+import { ReplaceFn } from "@utils/types";
 import { search } from "@webpack";
-import { Button, Clipboard, Forms, Margins, Parser, React, Switch, Text, TextInput } from "@webpack/common";
+import { Button, Clipboard, Forms, Parser, React, Switch, Text, TextInput } from "@webpack/common";
 
 import { CheckedTextInput } from "./CheckedTextInput";
 import ErrorBoundary from "./ErrorBoundary";
@@ -41,20 +44,29 @@ const findCandidates = debounce(function ({ find, setModule, setError }) {
         setModule([keys[0], candidates[keys[0]]]);
 });
 
-function ReplacementComponent({ module, match, replacement, setReplacementError }) {
+interface ReplacementComponentProps {
+    module: [id: number, factory: Function];
+    match: string | RegExp;
+    replacement: string | ReplaceFn;
+    setReplacementError(error: any): void;
+}
+
+function ReplacementComponent({ module, match, replacement, setReplacementError }: ReplacementComponentProps) {
     const [id, fact] = module;
     const [compileResult, setCompileResult] = React.useState<[boolean, string]>();
 
     const [patchedCode, matchResult, diff] = React.useMemo(() => {
         const src: string = fact.toString().replaceAll("\n", "");
+        const canonicalMatch = canonicalizeMatch(match);
         try {
-            var patched = src.replace(match, replacement);
+            const canonicalReplace = canonicalizeReplace(replacement, "YourPlugin");
+            var patched = src.replace(canonicalMatch, canonicalReplace as string);
             setReplacementError(void 0);
         } catch (e) {
             setReplacementError((e as Error).message);
             return ["", [], []];
         }
-        const m = src.match(match);
+        const m = src.match(canonicalMatch);
         return [patched, m, makeDiff(src, patched, m)];
     }, [id, match, replacement]);
 
@@ -118,7 +130,7 @@ function ReplacementComponent({ module, match, replacement, setReplacementError 
             )}
 
             {!!diff?.length && (
-                <Button className={Margins.marginTop20} onClick={() => {
+                <Button className={Margins.top20} onClick={() => {
                     try {
                         Function(patchedCode.replace(/^function\(/, "function patchedModule("));
                         setCompileResult([true, "Compiled successfully"]);
@@ -174,24 +186,26 @@ function ReplacementInput({ replacement, setReplacement, replacementError }) {
                 error={error ?? replacementError}
             />
             {!isFunc && (
-                <>
+                <div className="vc-text-selectable">
                     <Forms.FormTitle>Cheat Sheet</Forms.FormTitle>
                     {Object.entries({
+                        "\\i": "Special regex escape sequence that matches identifiers (varnames, classnames, etc.)",
                         "$$": "Insert a $",
                         "$&": "Insert the entire match",
-                        "$`​": "Insert the substring before the match",
+                        "$`\u200b": "Insert the substring before the match",
                         "$'": "Insert the substring after the match",
-                        "$n": "Insert the nth capturing group ($1, $2...)"
+                        "$n": "Insert the nth capturing group ($1, $2...)",
+                        "$self": "Insert the plugin instance",
                     }).map(([placeholder, desc]) => (
                         <Forms.FormText key={placeholder}>
                             {Parser.parse("`" + placeholder + "`")}: {desc}
                         </Forms.FormText>
                     ))}
-                </>
+                </div>
             )}
 
             <Switch
-                className={Margins.marginTop8}
+                className={Margins.top8}
                 value={isFunc}
                 onChange={setIsFunc}
                 note="'replacement' will be evaled if this is toggled"
@@ -206,7 +220,7 @@ function ReplacementInput({ replacement, setReplacement, replacementError }) {
 function PatchHelper() {
     const [find, setFind] = React.useState<string>("");
     const [match, setMatch] = React.useState<string>("");
-    const [replacement, setReplacement] = React.useState<string | Function>("");
+    const [replacement, setReplacement] = React.useState<string | ReplaceFn>("");
 
     const [replacementError, setReplacementError] = React.useState<string>();
 
@@ -245,7 +259,7 @@ function PatchHelper() {
 
     return (
         <Forms.FormSection>
-            <Text variant="heading-md/normal" tag="h2" className={Margins.marginBottom8}>Patch Helper</Text>
+            <Text variant="heading-md/normal" tag="h2" className={Margins.bottom8}>Patch Helper</Text>
             <Forms.FormTitle>find</Forms.FormTitle>
             <TextInput
                 type="text"
@@ -285,7 +299,7 @@ function PatchHelper() {
 
             {!!(find && match && replacement) && (
                 <>
-                    <Forms.FormTitle className={Margins.marginTop20}>Code</Forms.FormTitle>
+                    <Forms.FormTitle className={Margins.top20}>Code</Forms.FormTitle>
                     <div style={{ userSelect: "text" }}>{Parser.parse(makeCodeblock(code, "ts"))}</div>
                     <Button onClick={() => Clipboard.copy(code)}>Copy to Clipboard</Button>
                 </>

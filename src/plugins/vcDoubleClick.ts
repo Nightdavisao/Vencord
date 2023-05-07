@@ -16,17 +16,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { migratePluginSettings } from "@api/settings";
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
-import { SelectedChannelStore } from "@webpack/common";
+import { ChannelStore, SelectedChannelStore } from "@webpack/common";
 
 const timers = {} as Record<string, {
     timeout?: NodeJS.Timeout;
     i: number;
 }>;
 
-migratePluginSettings("VoiceChatDoubleClick", "vcDoubleClick");
 export default definePlugin({
     name: "VoiceChatDoubleClick",
     description: "Join voice chats via double click instead of single click",
@@ -39,30 +37,32 @@ export default definePlugin({
             // e.detail since instead of the event they pass the channel.
             // do this timer workaround instead
             replacement: [
-                // voice channels
+                // voice/stage channels
                 {
-                    match: /onClick:(.*)function\(\)\{(e\.handleClick.+?)}/g,
-                    replace: "onClick:$1function(){Vencord.Plugins.plugins.VoiceChatDoubleClick.schedule(()=>{$2}, e)}",
+                    match: /onClick:function\(\)\{(e\.handleClick.+?)}/g,
+                    replace: "onClick:function(){$self.schedule(()=>{$1},e)}",
                 },
-                // stage channels
-                {
-                    match: /onClick:(.{0,15})this\.handleClick,/g,
-                    replace: "onClick:$1(...args)=>Vencord.Plugins.plugins.VoiceChatDoubleClick.schedule(()=>{this.handleClick(...args);}, args[0]),",
-                }
             ],
         },
         {
-            find: 'className:"channelMention",iconType:(',
+            // channel mentions
+            find: ".shouldCloseDefaultModals",
             replacement: {
-                match: /onClick:(.{1,3}),/,
-                replace: "onClick:(_vcEv)=>(_vcEv.detail>=2||_vcEv.target.className.includes('MentionText'))&&($1)(),",
+                match: /onClick:(\i)(?=,.{0,30}className:"channelMention".+?(\i)\.inContent)/,
+                replace: (_, onClick, props) => ""
+                    + `onClick:(vcDoubleClickEvt)=>$self.shouldRunOnClick(vcDoubleClickEvt,${props})&&${onClick}()`,
             }
         }
     ],
 
+    shouldRunOnClick(e: MouseEvent, { channelId }) {
+        const channel = ChannelStore.getChannel(channelId);
+        if (!channel || ![2, 13].includes(channel.type)) return true;
+        return e.detail >= 2;
+    },
+
     schedule(cb: () => void, e: any) {
-        // support from stage and voice channels patch
-        const id = e?.id ?? e.props.channel.id as string;
+        const id = e.props.channel.id as string;
         if (SelectedChannelStore.getVoiceChannelId() === id) {
             cb();
             return;

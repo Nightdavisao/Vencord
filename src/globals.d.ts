@@ -16,6 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { LoDashStatic } from "lodash";
 
 declare global {
     /**
@@ -34,9 +35,17 @@ declare global {
     export var IS_WEB: boolean;
     export var IS_DEV: boolean;
     export var IS_STANDALONE: boolean;
+    export var IS_DISCORD_DESKTOP: boolean;
+    export var IS_VENCORD_DESKTOP: boolean;
 
     export var VencordNative: typeof import("./VencordNative").default;
     export var Vencord: typeof import("./Vencord");
+    export var VencordStyles: Map<string, {
+        name: string;
+        source: string;
+        classNames: Record<string, string>;
+        dom: HTMLStyleElement | null;
+    }>;
     export var appSettings: {
         set(setting: string, v: any): void;
     };
@@ -44,16 +53,18 @@ declare global {
      * Only available when running in Electron, undefined on web.
      * Thus, avoid using this or only use it inside an {@link IS_WEB} guard.
      *
-     * If you really must use it, mark your plugin as Desktop App only via
-     * `target: "DESKTOP"`
+     * If you really must use it, mark your plugin as Desktop App only by naming it Foo.desktop.ts(x)
      */
     export var DiscordNative: any;
+    export var VencordDesktop: any;
+    export var VencordDesktopNative: any;
 
     interface Window {
         webpackChunkdiscord_app: {
             push(chunk: any): any;
             pop(): any;
         };
+        _: LoDashStatic;
         [k: string]: any;
     }
 }

@@ -23,7 +23,7 @@ import { ISettingElementProps } from ".";
 
 const MAX_SAFE_NUMBER = BigInt(Number.MAX_SAFE_INTEGER);
 
-export function SettingNumericComponent({ option, pluginSettings, id, onChange, onError }: ISettingElementProps<PluginOptionNumber>) {
+export function SettingNumericComponent({ option, pluginSettings, definedSettings, id, onChange, onError }: ISettingElementProps<PluginOptionNumber>) {
     function serialize(value: any) {
         if (option.type === OptionType.BIGINT) return BigInt(value);
         return Number(value);
@@ -37,10 +37,13 @@ export function SettingNumericComponent({ option, pluginSettings, id, onChange, 
     }, [error]);
 
     function handleChange(newValue) {
-        const isValid = (option.isValid && option.isValid(newValue)) ?? true;
+        const isValid = option.isValid?.call(definedSettings, newValue) ?? true;
+
+        setError(null);
         if (typeof isValid === "string") setError(isValid);
         else if (!isValid) setError("Invalid input provided.");
-        else if (option.type === OptionType.NUMBER && BigInt(newValue) >= MAX_SAFE_NUMBER) {
+
+        if (option.type === OptionType.NUMBER && BigInt(newValue) >= MAX_SAFE_NUMBER) {
             setState(`${Number.MAX_SAFE_INTEGER}`);
             onChange(serialize(newValue));
         } else {
@@ -58,7 +61,7 @@ export function SettingNumericComponent({ option, pluginSettings, id, onChange, 
                 value={state}
                 onChange={handleChange}
                 placeholder={option.placeholder ?? "Enter a number"}
-                disabled={option.disabled?.() ?? false}
+                disabled={option.disabled?.call(definedSettings) ?? false}
                 {...option.componentProps}
             />
             {error && <Forms.FormText style={{ color: "var(--text-danger)" }}>{error}</Forms.FormText>}

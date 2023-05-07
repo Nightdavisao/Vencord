@@ -16,11 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { migratePluginSettings } from "@api/settings";
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
-
-migratePluginSettings("NoticesAPI", "NoticesApi");
 
 export default definePlugin({
     name: "NoticesAPI",
@@ -29,16 +26,15 @@ export default definePlugin({
     required: true,
     patches: [
         {
-            find: "updateNotice:",
+            find: 'displayName="NoticeStore"',
             replacement: [
                 {
-                    match: /;(.{1,2}=null;)(?=.{0,50}updateNotice)/g,
-                    replace:
-                        ";if(Vencord.Api.Notices.currentNotice)return !1;$1"
+                    match: /(?=;\i=null;.{0,70}getPremiumSubscription)/g,
+                    replace: ";if(Vencord.Api.Notices.currentNotice)return false"
                 },
                 {
-                    match: /(?<=NOTICE_DISMISS:function.+?){(?=if\(null==(.+?)\))/,
-                    replace: '{if($1?.id=="VencordNotice")return ($1=null,Vencord.Api.Notices.nextNotice(),true);'
+                    match: /(?<=,NOTICE_DISMISS:function\(\i\){)(?=if\(null==(\i)\))/,
+                    replace: (_, notice) => `if(${notice}.id=="VencordNotice")return(${notice}=null,Vencord.Api.Notices.nextNotice(),true);`
                 }
             ]
         }

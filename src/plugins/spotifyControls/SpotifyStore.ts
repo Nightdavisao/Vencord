@@ -16,12 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import IpcEvents from "@utils/IpcEvents";
-import { proxyLazy } from "@utils/proxyLazy";
+import { Settings } from "@api/Settings";
+import { proxyLazy } from "@utils/lazy";
 import { findByPropsLazy } from "@webpack";
 import { Flux, FluxDispatcher } from "@webpack/common";
-
-import cssText from "~fileContent/spotifyStyles.css";
 
 export interface Track {
     id: string;
@@ -69,11 +67,6 @@ type Repeat = "off" | "track" | "context";
 
 // Don't wanna run before Flux and Dispatcher are ready!
 export const SpotifyStore = proxyLazy(() => {
-    // TODO: Move this elsewhere
-    const style = document.createElement("style");
-    style.innerText = cssText;
-    document.head.appendChild(style);
-
     // For some reason ts hates extends Flux.Store
     const { Store } = Flux;
 
@@ -83,10 +76,6 @@ export const SpotifyStore = proxyLazy(() => {
     const API_BASE = "https://api.spotify.com/v1/me/player";
 
     class SpotifyStore extends Store {
-        constructor(dispatcher: any, handlers: any) {
-            super(dispatcher, handlers);
-        }
-
         public mPosition = 0;
         private start = 0;
 
@@ -100,7 +89,11 @@ export const SpotifyStore = proxyLazy(() => {
         public isSettingPosition = false;
 
         public openExternal(path: string) {
-            VencordNative.ipc.invoke(IpcEvents.OPEN_EXTERNAL, "https://open.spotify.com" + path);
+            const url = Settings.plugins.SpotifyControls.useSpotifyUris
+                ? "spotify:" + path.replaceAll("/", (_, idx) => idx === 0 ? "" : ":")
+                : "https://open.spotify.com" + path;
+
+            VencordNative.native.openExternal(url);
         }
 
         // Need to keep track of this manually

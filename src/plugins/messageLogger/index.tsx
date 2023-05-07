@@ -16,95 +16,104 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/settings";
+import "./messageLogger.css";
+
+import { addContextMenuPatch, NavContextMenuPatchCallback, removeContextMenuPatch } from "@api/ContextMenu";
+import { Settings } from "@api/Settings";
+import { disableStyle, enableStyle } from "@api/Styles";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
-import Logger from "@utils/Logger";
+import { Logger } from "@utils/Logger";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Parser, UserStore } from "@webpack/common";
+import { FluxDispatcher, i18n, Menu, moment, Parser, Timestamp, UserStore } from "@webpack/common";
 
-function addDeleteStyleClass() {
+import overlayStyle from "./deleteStyleOverlay.css?managed";
+import textStyle from "./deleteStyleText.css?managed";
+
+const styles = findByPropsLazy("edited", "communicationDisabled", "isSystemMessage");
+
+function addDeleteStyle() {
     if (Settings.plugins.MessageLogger.deleteStyle === "text") {
-        document.body.classList.remove("messagelogger-red-overlay");
-        document.body.classList.add("messagelogger-red-text");
+        enableStyle(textStyle);
+        disableStyle(overlayStyle);
     } else {
-        document.body.classList.remove("messagelogger-red-text");
-        document.body.classList.add("messagelogger-red-overlay");
+        disableStyle(textStyle);
+        enableStyle(overlayStyle);
     }
 }
+
+const REMOVE_HISTORY_ID = "ml-remove-history";
+const TOGGLE_DELETE_STYLE_ID = "ml-toggle-style";
+const patchMessageContextMenu: NavContextMenuPatchCallback = (children, props) => () => {
+    const { message } = props;
+    const { deleted, editHistory, id, channel_id } = message;
+
+    if (!deleted && !editHistory?.length) return;
+
+    toggle: {
+        if (!deleted) break toggle;
+
+        const domElement = document.getElementById(`chat-messages-${channel_id}-${id}`);
+        if (!domElement) break toggle;
+
+        children.push((
+            <Menu.MenuItem
+                id={TOGGLE_DELETE_STYLE_ID}
+                key={TOGGLE_DELETE_STYLE_ID}
+                label="Toggle Deleted Highlight"
+                action={() => domElement.classList.toggle("messagelogger-deleted")}
+            />
+        ));
+    }
+
+    children.push((
+        <Menu.MenuItem
+            id={REMOVE_HISTORY_ID}
+            key={REMOVE_HISTORY_ID}
+            label="Remove Message History"
+            color="danger"
+            action={() => {
+                if (deleted) {
+                    FluxDispatcher.dispatch({
+                        type: "MESSAGE_DELETE",
+                        channelId: channel_id,
+                        id,
+                        mlDeleted: true
+                    });
+                } else {
+                    message.editHistory = [];
+                }
+            }}
+        />
+    ));
+};
 
 export default definePlugin({
     name: "MessageLogger",
     description: "Temporarily logs deleted and edited messages.",
     authors: [Devs.rushii, Devs.Ven],
 
-    timestampModule: null as any,
-    moment: null as Function | null,
-
-    css: `
-        .messagelogger-red-overlay .messageLogger-deleted {
-            background-color: rgba(240, 71, 71, 0.15);
-        }
-        .messagelogger-red-text .messageLogger-deleted div {
-            color: #f04747;
-        }
-
-        .messageLogger-deleted [class^="buttons"] {
-            display: none;
-        }
-
-        .messageLogger-deleted-attachment {
-            filter: grayscale(1);
-        }
-
-        .messageLogger-deleted-attachment:hover {
-            filter: grayscale(0);
-            transition: 250ms filter linear;
-        }
-
-        .theme-dark .messageLogger-edited {
-            filter: brightness(80%);
-        }
-
-        .theme-light .messageLogger-edited {
-            opacity: 0.5;
-        }
-    `,
-
     start() {
-        this.moment = findByPropsLazy("relativeTimeRounding", "relativeTimeThreshold");
-        this.timestampModule = findByPropsLazy("messageLogger_TimestampComponent");
-
-        const style = this.style = document.createElement("style");
-        style.textContent = this.css;
-        style.id = "MessageLogger-css";
-        document.head.appendChild(style);
-
-        addDeleteStyleClass();
+        addDeleteStyle();
+        addContextMenuPatch("message", patchMessageContextMenu);
     },
 
     stop() {
-        this.style?.remove();
-
-        document.querySelectorAll(".messageLogger-deleted").forEach(e => e.remove());
-        document.querySelectorAll(".messageLogger-edited").forEach(e => e.remove());
-        document.body.classList.remove("messagelogger-red-overlay");
-        document.body.classList.remove("messagelogger-red-text");
+        removeContextMenuPatch("message", patchMessageContextMenu);
     },
 
     renderEdit(edit: { timestamp: any, content: string; }) {
-        const Timestamp = this.timestampModule.messageLogger_TimestampComponent;
         return (
             <ErrorBoundary noop>
-                <div className="messageLogger-edited">
+                <div className="messagelogger-edited">
                     {Parser.parse(edit.content)}
                     <Timestamp
                         timestamp={edit.timestamp}
                         isEdited={true}
                         isInline={false}
                     >
-                        <span>{" "}(edited)</span>
+                        <span className={styles.edited}>{" "}({i18n.Messages.MESSAGE_EDITED})</span>
                     </Timestamp>
                 </div>
             </ErrorBoundary>
@@ -113,7 +122,7 @@ export default definePlugin({
 
     makeEdit(newMessage: any, oldMessage: any): any {
         return {
-            timestamp: this.moment?.call(newMessage.edited_timestamp),
+            timestamp: moment?.call(newMessage.edited_timestamp),
             content: oldMessage.content
         };
     },
@@ -127,7 +136,7 @@ export default definePlugin({
                 { label: "Red text", value: "text", default: true },
                 { label: "Red overlay", value: "overlay" }
             ],
-            onChange: () => addDeleteStyleClass()
+            onChange: () => addDeleteStyle()
         },
         ignoreBots: {
             type: OptionType.BOOLEAN,
@@ -141,7 +150,7 @@ export default definePlugin({
         }
     },
 
-    handleDelete(cache: any, data: { ids: string[], id: string; }, isBulk: boolean) {
+    handleDelete(cache: any, data: { ids: string[], id: string; mlDeleted?: boolean; }, isBulk: boolean) {
         try {
             if (cache == null || (!isBulk && !cache.has(data.id))) return cache;
 
@@ -153,7 +162,8 @@ export default definePlugin({
                 if (!msg) return;
 
                 const EPHEMERAL = 64;
-                const shouldIgnore = (msg.flags & EPHEMERAL) === EPHEMERAL ||
+                const shouldIgnore = data.mlDeleted ||
+                    (msg.flags & EPHEMERAL) === EPHEMERAL ||
                     ignoreBots && msg.author?.bot ||
                     ignoreSelf && msg.author?.id === myId;
 
@@ -190,7 +200,7 @@ export default definePlugin({
                     replace:
                         "MESSAGE_DELETE:function($1){" +
                         "   var cache = $2getOrCreate($1.channelId);" +
-                        "   cache = Vencord.Plugins.plugins.MessageLogger.handleDelete(cache, $1, false);" +
+                        "   cache = $self.handleDelete(cache, $1, false);" +
                         "   $2commit(cache);" +
                         "},"
                 },
@@ -200,7 +210,7 @@ export default definePlugin({
                     replace:
                         "MESSAGE_DELETE_BULK:function($1){" +
                         "   var cache = $2getOrCreate($1.channelId);" +
-                        "   cache = Vencord.Plugins.plugins.MessageLogger.handleDelete(cache, $1, true);" +
+                        "   cache = $self.handleDelete(cache, $1, true);" +
                         "   $2commit(cache);" +
                         "},"
                 },
@@ -209,11 +219,17 @@ export default definePlugin({
                     match: /(MESSAGE_UPDATE:function\((\w)\).+?)\.update\((\w)/,
                     replace: "$1" +
                         ".update($3,m =>" +
+                        "   (($2.message.flags & 64) === 64 || (Vencord.Settings.plugins.MessageLogger.ignoreBots && $2.message.author?.bot) || (Vencord.Settings.plugins.MessageLogger.ignoreSelf && $2.message.author?.id === Vencord.Webpack.Common.UserStore.getCurrentUser().id)) ? m :" +
                         "   $2.message.content !== m.editHistory?.[0]?.content && $2.message.content !== m.content ?" +
-                        "       m.set('editHistory',[...(m.editHistory || []), Vencord.Plugins.plugins.MessageLogger.makeEdit($2.message, m)]) :" +
+                        "       m.set('editHistory',[...(m.editHistory || []), $self.makeEdit($2.message, m)]) :" +
                         "       m" +
                         ")" +
                         ".update($3"
+                },
+                {
+                    // fix up key (edit last message) attempting to edit a deleted message
+                    match: /(?<=getLastEditableMessage=.{0,200}\.find\(\(function\((\i)\)\{)return/,
+                    replace: "return !$1.deleted &&"
                 }
             ]
         },
@@ -287,15 +303,15 @@ export default definePlugin({
         {
             // Attachment renderer
             // Module 96063
-            find: "[\"className\",\"attachment\",\"inlineMedia\"]",
+            find: "[\"className\",\"attachment\",\"inlineMedia\"",
             replacement: [
                 {
                     match: /((\w)\.className,\w=\2\.attachment),/,
                     replace: "$1,deleted=$2.attachment?.deleted,"
                 },
                 {
-                    match: /(hiddenSpoilers:\w,className:)/,
-                    replace: "$1 (deleted ? 'messageLogger-deleted-attachment ' : '') +"
+                    match: /\["className","attachment","inlineMedia".+?className:/,
+                    replace: "$& (deleted ? 'messagelogger-deleted-attachment ' : '') +"
                 }
             ]
         },
@@ -306,14 +322,9 @@ export default definePlugin({
             find: "Message must not be a thread starter message",
             replacement: [
                 {
-                    // Write message.deleted to deleted var
-                    match: /var (\w)=(\w).id,(?=\w=\w.message)/,
-                    replace: "var $1=$2.id,deleted=$2.message.deleted,"
-                },
-                {
-                    // Append messageLogger-deleted to classNames if deleted
+                    // Append messagelogger-deleted to classNames if deleted
                     match: /\)\("li",\{(.+?),className:/,
-                    replace: ")(\"li\",{$1,className:(deleted ? \"messageLogger-deleted \" : \"\")+"
+                    replace: ")(\"li\",{$1,className:(arguments[0].message.deleted ? \"messagelogger-deleted \" : \"\")+"
                 }
             ]
         },
@@ -326,7 +337,7 @@ export default definePlugin({
                 {
                     // Render editHistory in the deepest div for message content
                     match: /(\)\("div",\{id:.+?children:\[)/,
-                    replace: "$1 (arguments[0].message.editHistory.length > 0 ? arguments[0].message.editHistory.map(edit => Vencord.Plugins.plugins.MessageLogger.renderEdit(edit)) : null), "
+                    replace: "$1 (arguments[0].message.editHistory.length > 0 ? arguments[0].message.editHistory.map(edit => $self.renderEdit(edit)) : null), "
                 }
             ]
         },
@@ -345,17 +356,6 @@ export default definePlugin({
                     replace: "MESSAGE_DELETE_BULK:function($1){},"
                 }
             ]
-        },
-
-        {
-            // Message "(edited)" timestamp component
-            // Module 23552
-            find: "Messages.MESSAGE_EDITED_TIMESTAMP_A11Y_LABEL.format",
-            replacement: {
-                // Re-export the timestamp component under a findable name
-                match: /{(\w{1,2}:\(\)=>(\w{1,2}))}/,
-                replace: "{$1,messageLogger_TimestampComponent:()=>$2}"
-            }
         },
 
         {

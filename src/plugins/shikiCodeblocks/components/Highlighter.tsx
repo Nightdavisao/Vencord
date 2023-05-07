@@ -17,8 +17,7 @@
 */
 
 import ErrorBoundary from "@components/ErrorBoundary";
-import { useAwaiter } from "@utils/misc";
-import { useIntersection } from "@utils/react";
+import { useAwaiter, useIntersection } from "@utils/react";
 import { hljs, React } from "@webpack/common";
 
 import { resolveLang } from "../api/languages";
@@ -90,14 +89,10 @@ export const Highlighter = ({
     let langName;
     if (lang) langName = useHljs ? hljs?.getLanguage?.(lang)?.name : shikiLang?.name;
 
-    const preClasses = [cl("root")];
-    if (!langName) preClasses.push(cl("plain"));
-    if (isPreview) preClasses.push(cl("preview"));
-
     return (
         <div
             ref={rootRef}
-            className={preClasses.join(" ")}
+            className={cl("root", { plain: !langName, preview: isPreview })}
             style={{
                 backgroundColor: useHljs
                     ? themeBase.backgroundColor

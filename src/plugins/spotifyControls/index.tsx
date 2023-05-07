@@ -16,16 +16,35 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { Settings } from "@api/Settings";
+import { disableStyle, enableStyle } from "@api/Styles";
 import { Devs } from "@utils/constants";
-import definePlugin from "@utils/types";
+import definePlugin, { OptionType } from "@utils/types";
 
+import hoverOnlyStyle from "./hoverOnly.css?managed";
 import { Player } from "./PlayerComponent";
+
+function toggleHoverControls(value: boolean) {
+    (value ? enableStyle : disableStyle)(hoverOnlyStyle);
+}
 
 export default definePlugin({
     name: "SpotifyControls",
-    description: "Spotify Controls",
+    description: "Adds a Spotify player above the account panel",
     authors: [Devs.Ven, Devs.afn, Devs.KraXen72],
-    dependencies: ["MenuItemDeobfuscatorAPI"],
+    options: {
+        hoverControls: {
+            description: "Show controls on hover",
+            type: OptionType.BOOLEAN,
+            default: false,
+            onChange: v => toggleHoverControls(v)
+        },
+        useSpotifyUris: {
+            type: OptionType.BOOLEAN,
+            description: "Open Spotify URIs instead of Spotify URLs. Will only work if you have Spotify installed and might not work on all platforms",
+            default: false
+        }
+    },
     patches: [
         {
             find: "showTaglessAccountPanel:",
@@ -33,7 +52,7 @@ export default definePlugin({
                 // return React.createElement(AccountPanel, { ..., showTaglessAccountPanel: blah })
                 match: /return ?(.{0,30}\(.{1,3},\{[^}]+?,showTaglessAccountPanel:.+?\}\))/,
                 // return [Player, Panel]
-                replace: "return [Vencord.Plugins.plugins.SpotifyControls.renderPlayer(),$1]"
+                replace: "return [$self.renderPlayer(),$1]"
             }
         },
         // Adds POST and a Marker to the SpotifyAPI (so we can easily find it)
@@ -53,6 +72,6 @@ export default definePlugin({
             }
         }
     ],
-
+    start: () => toggleHoverControls(Settings.plugins.SpotifyControls.hoverControls),
     renderPlayer: () => <Player />
 });

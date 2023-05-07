@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import Logger from "@utils/Logger";
-import { proxyLazy } from "@utils/proxyLazy";
+import { proxyLazy } from "@utils/lazy";
+import { Logger } from "@utils/Logger";
 import type { WebpackInstance } from "discord-types/other";
 
 import { traceFunction } from "../debug/Tracer";
@@ -50,12 +50,14 @@ export const filters = {
         }
         return true;
     },
+    byStoreName: (name: string): FilterFn => m =>
+        m.constructor?.displayName === name
 };
 
 export const subscriptions = new Map<FilterFn, CallbackFn>();
 export const listeners = new Set<CallbackFn>();
 
-export type CallbackFn = (mod: any) => void;
+export type CallbackFn = (mod: any, id: number) => void;
 
 export function _initWebpack(instance: typeof window.webpackChunkdiscord_app) {
     if (cache !== void 0) throw "no.";
@@ -65,7 +67,7 @@ export function _initWebpack(instance: typeof window.webpackChunkdiscord_app) {
     instance.pop();
 }
 
-if (IS_DEV && !IS_WEB) {
+if (IS_DEV && IS_DISCORD_DESKTOP) {
     var devToolsOpen = false;
     // At this point in time, DiscordNative has not been exposed yet, so setImmediate is needed
     setTimeout(() => {
@@ -84,24 +86,31 @@ export const find = traceFunction("find", function find(filter: FilterFn, getDef
         const mod = cache[key];
         if (!mod?.exports) continue;
 
-        if (filter(mod.exports))
-            return mod.exports;
+        if (filter(mod.exports)) {
+            return isWaitFor ? [mod.exports, Number(key)] : mod.exports;
+        }
 
         if (typeof mod.exports !== "object") continue;
 
-        if (mod.exports.default && filter(mod.exports.default))
-            return getDefault ? mod.exports.default : mod.exports;
+        if (mod.exports.default && filter(mod.exports.default)) {
+            const found = getDefault ? mod.exports.default : mod.exports;
+            return isWaitFor ? [found, Number(key)] : found;
+        }
 
         // the length check makes search about 20% faster
         for (const nestedMod in mod.exports) if (nestedMod.length <= 3) {
             const nested = mod.exports[nestedMod];
-            if (nested && filter(nested)) return nested;
+            if (nested && filter(nested)) {
+                return isWaitFor ? [nested, Number(key)] : nested;
+            }
         }
     }
 
     if (!isWaitFor) {
         const err = new Error("Didn't find module matching this filter");
         if (IS_DEV) {
+            logger.error(err);
+            logger.error(filter);
             if (!devToolsOpen)
                 // Strict behaviour in DevBuilds to fail early and make sure the issue is found
                 throw err;
@@ -110,7 +119,7 @@ export const find = traceFunction("find", function find(filter: FilterFn, getDef
         }
     }
 
-    return null;
+    return isWaitFor ? [null, null] : null;
 });
 
 /**
@@ -306,13 +315,6 @@ export function findByPropsLazy(...props: string[]) {
 }
 
 /**
- * Find all modules that have the specified properties
- */
-export function findAllByProps(...props: string[]) {
-    return findAll(filters.byProps(...props));
-}
-
-/**
  * Find a function by its code
  */
 export function findByCode(...code: string[]) {
@@ -327,6 +329,20 @@ export function findByCodeLazy(...code: string[]) {
 }
 
 /**
+ * Find a store by its displayName
+ */
+export function findStore(name: string) {
+    return find(filters.byStoreName(name));
+}
+
+/**
+ * findByDisplayName but lazy
+ */
+export function findStoreLazy(name: string) {
+    return findLazy(filters.byStoreName(name));
+}
+
+/**
  * Wait for a module that matches the provided filter to be registered,
  * then call the callback with the module as the first argument
  */
@@ -338,8 +354,8 @@ export function waitFor(filter: string | string[] | FilterFn, callback: Callback
     else if (typeof filter !== "function")
         throw new Error("filter must be a string, string[] or function, got " + typeof filter);
 
-    const existing = find(filter!, true, true);
-    if (existing) return void callback(existing);
+    const [existing, id] = find(filter!, true, true);
+    if (existing) return void callback(existing, id);
 
     subscriptions.set(filter, callback);
 }

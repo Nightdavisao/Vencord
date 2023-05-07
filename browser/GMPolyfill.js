@@ -59,8 +59,10 @@ async function checkCors(url, method) {
     const origin = headers["access-control-allow-origin"];
     if (origin !== "*" && origin !== window.location.origin) return false;
 
-    const methods = headers["access-control-allow-methods"]?.split(/,\s/g);
-    if (methods && !methods.includes(method)) return false;
+    const methods = headers["access-control-allow-methods"]?.toLowerCase()
+        .split(",")
+        .map(s => s.trim());
+    if (methods && !methods.includes(method.toLowerCase())) return false;
 
     return true;
 }
@@ -92,6 +94,7 @@ function GM_fetch(url, opt) {
                         resp.arrayBuffer = () => blobTo("arrayBuffer", blob);
                         resp.text = () => blobTo("text", blob);
                         resp.json = async () => JSON.parse(await blobTo("text", blob));
+                        resp.headers = new Headers(parseHeaders(resp.responseHeaders));
                         resolve(resp);
                     };
                     options.ontimeout = () => reject("fetch timeout");

@@ -16,12 +16,20 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { Badge } from "./Badge";
+
+export interface Sender {
+    id : number,
+    discordID: string,
+    username: string,
+    profilePhoto: string,
+    badges: Badge[]
+}
+
 export interface Review {
     comment: string,
     id: number,
-    senderdiscordid: string,
-    senderuserid: number,
     star: number,
-    username: string,
-    profile_photo: string;
+    sender: Sender,
+    timestamp: number
 }

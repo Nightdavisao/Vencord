@@ -16,22 +16,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { classes, useAwaiter } from "@utils/misc";
+import { Settings } from "@api/Settings";
+import { classes } from "@utils/misc";
+import { useAwaiter } from "@utils/react";
 import { findLazy } from "@webpack";
 import { Forms, React, Text, UserStore } from "@webpack/common";
 import type { KeyboardEvent } from "react";
 
 import { addReview, getReviews } from "../Utils/ReviewDBAPI";
+import { authorize, showToast } from "../Utils/Utils";
 import ReviewComponent from "./ReviewComponent";
 
 const Classes = findLazy(m => typeof m.textarea === "string");
 
 export default function ReviewsView({ userId }: { userId: string; }) {
+    const { token } = Settings.plugins.ReviewDB;
     const [refetchCount, setRefetchCount] = React.useState(0);
     const [reviews, _, isLoading] = useAwaiter(() => getReviews(userId), {
         fallbackValue: [],
         deps: [refetchCount],
     });
+    const username = UserStore.getUser(userId)?.username ?? "";
 
     const dirtyRefetch = () => setRefetchCount(refetchCount + 1);
 
@@ -44,54 +49,65 @@ export default function ReviewsView({ userId }: { userId: string; }) {
                 comment: (target as HTMLInputElement).value,
                 star: -1
             }).then(res => {
-                if (res === 0 || res === 1) {
+                if (res?.success) {
                     (target as HTMLInputElement).value = ""; // clear the input
                     dirtyRefetch();
+                } else if (res?.message) {
+                    showToast(res.message);
                 }
             });
         }
     }
 
     return (
-        <div className="ReviewDB">
-            <>
-                <Text
-                    tag="h2"
-                    variant="eyebrow"
-                    style={{
-                        paddingLeft: "0px",
-                        marginBottom: "12px",
-                        color: "var(--header-primary)"
-                    }}
-                >
-                    User Reviews
-                </Text>
-                {reviews?.map(review =>
-                    <ReviewComponent
-                        key={review.id}
-                        review={review}
-                        refetch={dirtyRefetch}
-                    />
-                )}
-                {reviews?.length === 0 && (
-                    <Forms.FormText style={{ paddingLeft: "0px", paddingRight: "12px", marginBottom: "12px" }}>
-                        Looks like nobody reviewed this user yet. You could be the first!
-                    </Forms.FormText>
-                )}
-                <textarea
-                    className={classes(Classes.textarea, "enter-comment")}
-                    placeholder={"Review @" + UserStore.getUser(userId)?.username ?? ""}
-                    onKeyDown={onKeyPress}
-                    style={{
-                        padding: "12px",
-                        marginBottom: "12px",
-                        color: "var(--text-normal)",
-                        border: "1px solid var(--profile-message-input-border-color)",
-                        fontSize: "14px",
-                        borderRadius: "3px",
-                    }}
+        <div className="vc-reviewdb-view">
+            <Text
+                tag="h2"
+                variant="eyebrow"
+                style={{
+                    marginBottom: "12px",
+                    color: "var(--header-primary)"
+                }}
+            >
+                User Reviews
+            </Text>
+            {reviews?.map(review =>
+                <ReviewComponent
+                    key={review.id}
+                    review={review}
+                    refetch={dirtyRefetch}
                 />
-            </>
+            )}
+            {reviews?.length === 0 && (
+                <Forms.FormText style={{ padding: "12px", paddingTop: "0px", paddingLeft: "4px", fontWeight: "bold", fontStyle: "italic" }}>
+                    Looks like nobody reviewed this user yet. You could be the first!
+                </Forms.FormText>
+            )}
+            <textarea
+                className={classes(Classes.textarea.replace("textarea", ""), "enter-comment")}
+                // this produces something like '-_59yqs ...' but since no class exists with that name its fine
+                placeholder={
+                    token
+                        ? (reviews?.some(r => r.sender.discordID === UserStore.getCurrentUser().id)
+                            ? `Update review for @${username}`
+                            : `Review @${username}`)
+                        : "You need to authorize to review users!"
+                }
+                onKeyDown={onKeyPress}
+                onClick={() => {
+                    if (!token) {
+                        showToast("Opening authorization window...");
+                        authorize();
+                    }
+                }}
+
+                style={{
+                    marginTop: "6px",
+                    resize: "none",
+                    marginBottom: "12px",
+                    overflow: "hidden",
+                }}
+            />
         </div>
     );
 }

@@ -16,14 +16,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { useSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { ErrorCard } from "@components/ErrorCard";
 import { Flex } from "@components/Flex";
 import { handleComponentFailed } from "@components/handleComponentFailed";
 import { Link } from "@components/Link";
-import { classes, useAwaiter } from "@utils/misc";
-import { changes, checkForUpdates, getRepo, isNewer, rebuild, update, updateError, UpdateLogger } from "@utils/updater";
-import { Alerts, Button, Card, Forms, Margins, Parser, React, Toasts } from "@webpack/common";
+import { Margins } from "@utils/margins";
+import { classes } from "@utils/misc";
+import { relaunch } from "@utils/native";
+import { onlyOnce } from "@utils/onlyOnce";
+import { useAwaiter } from "@utils/react";
+import { changes, checkForUpdates, getRepo, isNewer, update, updateError, UpdateLogger } from "@utils/updater";
+import { Alerts, Button, Card, Forms, Parser, React, Switch, Toasts } from "@webpack/common";
 
 import gitHash from "~git-hash";
 
@@ -69,14 +74,18 @@ interface CommonProps {
     repoPending: boolean;
 }
 
+function HashLink({ repo, hash, disabled = false }: { repo: string, hash: string, disabled?: boolean; }) {
+    return <Link href={`${repo}/commit/${hash}`} disabled={disabled}>
+        {hash}
+    </Link>;
+}
+
 function Changes({ updates, repo, repoPending }: CommonProps & { updates: typeof changes; }) {
     return (
         <Card style={{ padding: ".5em" }}>
             {updates.map(({ hash, author, message }) => (
                 <div>
-                    <Link href={`${repo}/commit/${hash}`} disabled={repoPending}>
-                        <code>{hash}</code>
-                    </Link>
+                    <code><HashLink {...{ repo, hash }} disabled={repoPending} /></code>
                     <span style={{
                         marginLeft: "0.5em",
                         color: "var(--text-normal)"
@@ -104,21 +113,20 @@ function Updatable(props: CommonProps) {
                     </ErrorCard>
                 </>
             ) : (
-                <Forms.FormText className={Margins.marginBottom8}>
+                <Forms.FormText className={Margins.bottom8}>
                     {isOutdated ? `There are ${updates.length} Updates` : "Up to Date!"}
                 </Forms.FormText>
             )}
 
             {isOutdated && <Changes updates={updates} {...props} />}
 
-            <Flex className={classes(Margins.marginBottom8, Margins.marginTop8)}>
+            <Flex className={classes(Margins.bottom8, Margins.top8)}>
                 {isOutdated && <Button
                     size={Button.Sizes.SMALL}
                     disabled={isUpdating || isChecking}
                     onClick={withDispatcher(setIsUpdating, async () => {
                         if (await update()) {
                             setUpdates([]);
-                            const needFullRestart = await rebuild();
                             await new Promise<void>(r => {
                                 Alerts.show({
                                     title: "Update Success!",
@@ -126,10 +134,7 @@ function Updatable(props: CommonProps) {
                                     confirmText: "Restart",
                                     cancelText: "Not now!",
                                     onConfirm() {
-                                        if (needFullRestart)
-                                            window.DiscordNative.app.relaunch();
-                                        else
-                                            location.reload();
+                                        relaunch();
                                         r();
                                     },
                                     onCancel: r
@@ -170,7 +175,7 @@ function Updatable(props: CommonProps) {
 function Newer(props: CommonProps) {
     return (
         <>
-            <Forms.FormText className={Margins.marginBottom8}>
+            <Forms.FormText className={Margins.bottom8}>
                 Your local copy has more recent commits. Please stash or reset them.
             </Forms.FormText>
             <Changes {...props} updates={changes} />
@@ -179,6 +184,8 @@ function Newer(props: CommonProps) {
 }
 
 function Updater() {
+    const settings = useSettings(["notifyAboutUpdates", "autoUpdate", "autoUpdateNotification"]);
+
     const [repo, err, repoPending] = useAwaiter(getRepo, { fallbackValue: "Loading..." });
 
     React.useEffect(() => {
@@ -192,16 +199,49 @@ function Updater() {
     };
 
     return (
-        <Forms.FormSection>
+        <Forms.FormSection className={Margins.top16}>
+            <Forms.FormTitle tag="h5">Updater Settings</Forms.FormTitle>
+            <Switch
+                value={settings.notifyAboutUpdates}
+                onChange={(v: boolean) => settings.notifyAboutUpdates = v}
+                note="Shows a notification on startup"
+                disabled={settings.autoUpdate}
+            >
+                Get notified about new updates
+            </Switch>
+            <Switch
+                value={settings.autoUpdate}
+                onChange={(v: boolean) => settings.autoUpdate = v}
+                note="Automatically update Vencord without confirmation prompt"
+            >
+                Automatically update
+            </Switch>
+            <Switch
+                value={settings.autoUpdateNotification}
+                onChange={(v: boolean) => settings.autoUpdateNotification = v}
+                note="Shows a notification when Vencord automatically updates"
+                disabled={!settings.autoUpdate}
+            >
+                Get notified when an automatic update completes
+            </Switch>
+
             <Forms.FormTitle tag="h5">Repo</Forms.FormTitle>
 
-            <Forms.FormText>{repoPending ? repo : err ? "Failed to retrieve - check console" : (
-                <Link href={repo}>
-                    {repo.split("/").slice(-2).join("/")}
-                </Link>
-            )} ({gitHash})</Forms.FormText>
+            <Forms.FormText className="vc-text-selectable">
+                {repoPending
+                    ? repo
+                    : err
+                        ? "Failed to retrieve - check console"
+                        : (
+                            <Link href={repo}>
+                                {repo.split("/").slice(-2).join("/")}
+                            </Link>
+                        )
+                }
+                {" "}(<HashLink hash={gitHash} repo={repo} disabled={repoPending} />)
+            </Forms.FormText>
 
-            <Forms.FormDivider />
+            <Forms.FormDivider className={Margins.top8 + " " + Margins.bottom8} />
 
             <Forms.FormTitle tag="h5">Updates</Forms.FormTitle>
 
@@ -212,5 +252,5 @@ function Updater() {
 
 export default IS_WEB ? null : ErrorBoundary.wrap(Updater, {
     message: "Failed to render the Updater. If this persists, try using the installer to reinstall!",
-    onError: handleComponentFailed,
+    onError: onlyOnce(handleComponentFailed),
 });

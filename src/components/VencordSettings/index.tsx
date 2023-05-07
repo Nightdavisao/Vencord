@@ -16,25 +16,23 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import ErrorBoundary from "@components/ErrorBoundary";
-import { findByCodeLazy } from "@webpack";
-import { Forms, Router, Text } from "@webpack/common";
+import "./settingsStyles.css";
 
-import cssText from "~fileContent/settingsStyles.css";
+import { classNameFactory } from "@api/Styles";
+import ErrorBoundary from "@components/ErrorBoundary";
+import { handleComponentFailed } from "@components/handleComponentFailed";
+import { isMobile } from "@utils/misc";
+import { onlyOnce } from "@utils/onlyOnce";
+import { Forms, SettingsRouter, TabBar, Text } from "@webpack/common";
 
 import BackupRestoreTab from "./BackupRestoreTab";
+import CloudTab from "./CloudTab";
 import PluginsTab from "./PluginsTab";
 import ThemesTab from "./ThemesTab";
 import Updater from "./Updater";
 import VencordSettings from "./VencordTab";
 
-const style = document.createElement("style");
-style.textContent = cssText;
-document.head.appendChild(style);
-
-const st = (style: string) => `vcSettings${style}`;
-
-const TabBar = findByCodeLazy('[role="tab"][aria-disabled="false"]');
+const cl = classNameFactory("vc-settings-");
 
 interface SettingsProps {
     tab: string;
@@ -50,7 +48,8 @@ const SettingsTabs: Record<string, SettingsTab> = {
     VencordPlugins: { name: "Plugins", component: () => <PluginsTab /> },
     VencordThemes: { name: "Themes", component: () => <ThemesTab /> },
     VencordUpdater: { name: "Updater" }, // Only show updater if IS_WEB is false
-    VencordSettingsSync: { name: "Backup & Restore", component: () => <BackupRestoreTab /> },
+    VencordCloud: { name: "Cloud", component: () => <CloudTab /> },
+    VencordSettingsSync: { name: "Backup & Restore", component: () => <BackupRestoreTab /> }
 };
 
 if (!IS_WEB) SettingsTabs.VencordUpdater.component = () => Updater && <Updater />;
@@ -58,23 +57,26 @@ if (!IS_WEB) SettingsTabs.VencordUpdater.component = () => Updater && <Updater /
 function Settings(props: SettingsProps) {
     const { tab = "VencordSettings" } = props;
 
-    const CurrentTab = SettingsTabs[tab]?.component;
+    const CurrentTab = SettingsTabs[tab]?.component ?? null;
+    if (isMobile) {
+        return CurrentTab && <CurrentTab />;
+    }
 
     return <Forms.FormSection>
-        <Text variant="heading-md/normal" tag="h2">Vencord Settings</Text>
+        <Text variant="heading-lg/semibold" style={{ color: "var(--header-primary)" }} tag="h2">Vencord Settings</Text>
 
         <TabBar
-            type={TabBar.Types.TOP}
-            look={TabBar.Looks.BRAND}
-            className={st("TabBar")}
+            type="top"
+            look="brand"
+            className={cl("tab-bar")}
             selectedItem={tab}
-            onItemSelect={Router.open}
+            onItemSelect={SettingsRouter.open}
         >
             {Object.entries(SettingsTabs).map(([key, { name, component }]) => {
                 if (!component) return null;
                 return <TabBar.Item
                     id={key}
-                    className={st("TabBarItem")}
+                    className={cl("tab-bar-item")}
                     key={key}>
                     {name}
                 </TabBar.Item>;
@@ -85,8 +87,10 @@ function Settings(props: SettingsProps) {
     </Forms.FormSection >;
 }
 
+const onError = onlyOnce(handleComponentFailed);
+
 export default function (props: SettingsProps) {
-    return <ErrorBoundary>
+    return <ErrorBoundary onError={onError}>
         <Settings tab={props.tab} />
     </ErrorBoundary>;
 }

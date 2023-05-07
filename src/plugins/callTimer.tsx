@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/settings";
+import { Settings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
@@ -74,8 +74,8 @@ export default definePlugin({
     patches: [{
         find: ".renderConnectionStatus=",
         replacement: {
-            match: /(?<=renderConnectionStatus=.+\(\)\.channel,children:)\w/,
-            replace: "[$&, Vencord.Plugins.plugins.CallTimer.renderTimer(this.props.channel.id)]"
+            match: /(?<=renderConnectionStatus=.+\.channel,children:)\w/,
+            replace: "[$&, $self.renderTimer(this.props.channel.id)]"
         }
     }],
     renderTimer(channelId: string) {

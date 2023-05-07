@@ -16,15 +16,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { migratePluginSettings, Settings } from "@api/settings";
+import { addContextMenuPatch, findGroupChildrenByChildId, NavContextMenuPatchCallback, removeContextMenuPatch } from "@api/ContextMenu";
 import { CheckedTextInput } from "@components/CheckedTextInput";
 import { Devs } from "@utils/constants";
-import Logger from "@utils/Logger";
-import { makeLazy } from "@utils/misc";
+import { Logger } from "@utils/Logger";
+import { Margins } from "@utils/margins";
 import { ModalContent, ModalHeader, ModalRoot, openModal } from "@utils/modal";
 import definePlugin from "@utils/types";
 import { findByCodeLazy, findByPropsLazy } from "@webpack";
-import { Forms, GuildStore, Margins, Menu, PermissionStore, React, Toasts, Tooltip, UserStore } from "@webpack/common";
+import { Forms, GuildStore, Menu, PermissionStore, React, Toasts, Tooltip, UserStore } from "@webpack/common";
 
 const MANAGE_EMOJIS_AND_STICKERS = 1n << 30n;
 
@@ -50,14 +50,14 @@ function getGuildCandidates(isAnimated: boolean) {
 }
 
 async function doClone(guildId: string, id: string, name: string, isAnimated: boolean) {
-    const data = await fetch(`https://cdn.discordapp.com/emojis/${id}.${isAnimated ? "gif" : "png"}`)
+    const data = await fetch(`${location.protocol}//${window.GLOBAL_ENV.CDN_HOST}/emojis/${id}.${isAnimated ? "gif" : "png"}`)
         .then(r => r.blob());
     const reader = new FileReader();
 
     reader.onload = () => {
         uploadEmoji({
             guildId,
-            name,
+            name: name.split("~")[0],
             image: reader.result
         }).then(() => {
             Toasts.show({
@@ -96,7 +96,7 @@ function CloneModal({ id, name: emojiName, isAnimated }: { id: string; name: str
 
     return (
         <>
-            <Forms.FormTitle className={Margins.marginTop20}>Custom Name</Forms.FormTitle>
+            <Forms.FormTitle className={Margins.top20}>Custom Name</Forms.FormTitle>
             <CheckedTextInput
                 value={name}
                 onChange={setName}
@@ -175,50 +175,12 @@ function CloneModal({ id, name: emojiName, isAnimated }: { id: string; name: str
     );
 }
 
-migratePluginSettings("EmoteCloner", "EmoteYoink");
-export default definePlugin({
-    name: "EmoteCloner",
-    description: "Adds a Clone context menu item to emotes to clone them your own server",
-    authors: [Devs.Ven],
-    dependencies: ["MenuItemDeobfuscatorAPI"],
-
-    patches: [{
-        // Literally copy pasted from ReverseImageSearch lol
-        find: "open-native-link",
-        replacement: {
-            match: /id:"open-native-link".{0,200}\(\{href:(.{0,3}),.{0,200}\},"open-native-link"\)/,
-            replace: "$&,Vencord.Plugins.plugins.EmoteCloner.makeMenu(arguments[2])"
-        },
-
-    },
-    // Also copy pasted from Reverse Image Search
-    {
-        // pass the target to the open link menu so we can grab its data
-        find: "REMOVE_ALL_REACTIONS_CONFIRM_BODY,",
-        predicate: makeLazy(() => !Settings.plugins.ReverseImageSearch.enabled),
-        noWarn: true,
-        replacement: {
-            match: /(?<props>.).onHeightUpdate.{0,200}(.)=(.)=.\.url;.+?\(null!=\3\?\3:\2[^)]+/,
-            replace: "$&,$<props>.target"
-        }
-    }],
-
-    makeMenu(htmlElement: HTMLImageElement) {
-        if (htmlElement?.dataset.type !== "emoji")
-            return null;
-
-        const { id } = htmlElement.dataset;
-        const name = htmlElement.alt.match(/:(.*)(?:~\d+)?:/)?.[1];
-
-        if (!name || !id)
-            return null;
-
-        const isAnimated = new URL(htmlElement.src).pathname.endsWith(".gif");
-
-        return <Menu.MenuItem
+function buildMenuItem(id: string, name: string, isAnimated: boolean) {
+    return (
+        <Menu.MenuItem
             id="emote-cloner"
             key="emote-cloner"
-            label="Clone"
+            label="Clone Emote"
             action={() =>
                 openModal(modalProps => (
                     <ModalRoot {...modalProps}>
@@ -226,7 +188,7 @@ export default definePlugin({
                             <img
                                 role="presentation"
                                 aria-hidden
-                                src={`https://cdn.discordapp.com/emojis/${id}.${isAnimated ? "gif" : "png"}`}
+                                src={`${location.protocol}//${window.GLOBAL_ENV.CDN_HOST}/emojis/${id}.${isAnimated ? "gif" : "png"}`}
                                 alt=""
                                 height={24}
                                 width={24}
@@ -240,7 +202,48 @@ export default definePlugin({
                     </ModalRoot>
                 ))
             }
-        >
-        </Menu.MenuItem>;
+        />
+    );
+}
+
+function isGifUrl(url: string) {
+    return new URL(url).pathname.endsWith(".gif");
+}
+
+const messageContextMenuPatch: NavContextMenuPatchCallback = (children, props) => () => {
+    const { favoriteableId, itemHref, itemSrc, favoriteableType } = props ?? {};
+
+    if (!favoriteableId || favoriteableType !== "emoji") return;
+
+    const match = props.message.content.match(RegExp(`<a?:(\\w+)(?:~\\d+)?:${favoriteableId}>|https://cdn\\.discordapp\\.com/emojis/${favoriteableId}\\.`));
+    if (!match) return;
+    const name = match[1] ?? "FakeNitroEmoji";
+
+    const group = findGroupChildrenByChildId("copy-link", children);
+    if (group) group.push(buildMenuItem(favoriteableId, name, isGifUrl(itemHref ?? itemSrc)));
+};
+
+const expressionPickerPatch: NavContextMenuPatchCallback = (children, props: { target: HTMLElement; }) => () => {
+    const { id, name, type } = props?.target?.dataset ?? {};
+    if (!id || !name || type !== "emoji") return;
+
+    const firstChild = props.target.firstChild as HTMLImageElement;
+
+    children.push(buildMenuItem(id, name, firstChild && isGifUrl(firstChild.src)));
+};
+
+export default definePlugin({
+    name: "EmoteCloner",
+    description: "Adds a Clone context menu item to emotes to clone them your own server",
+    authors: [Devs.Ven, Devs.Nuckyz],
+
+    start() {
+        addContextMenuPatch("message", messageContextMenuPatch);
+        addContextMenuPatch("expression-picker", expressionPickerPatch);
     },
+
+    stop() {
+        removeContextMenuPatch("message", messageContextMenuPatch);
+        removeContextMenuPatch("expression-picker", expressionPickerPatch);
+    }
 });

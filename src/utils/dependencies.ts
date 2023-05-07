@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { makeLazy } from "./misc";
+import { makeLazy } from "./lazy";
 
 /*
     Add dynamically loaded dependencies for plugins here.
@@ -78,3 +78,6 @@ export interface ApngFrameData {
 const shikiWorkerDist = "https://unpkg.com/@vap/shiki-worker@0.0.8/dist";
 export const shikiWorkerSrc = `${shikiWorkerDist}/${IS_DEV ? "index.js" : "index.min.js"}`;
 export const shikiOnigasmSrc = "https://unpkg.com/@vap/shiki@0.10.3/dist/onig.wasm";
+
+// @ts-expect-error SHUT UP
+export const getStegCloak = makeLazy(() => import("https://unpkg.com/stegcloak-dist@1.0.0/index.js"));

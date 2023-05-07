@@ -16,24 +16,35 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/settings";
+import { addBadge, BadgePosition, ProfileBadge, removeBadge } from "@api/Badges";
+import { addDecorator, removeDecorator } from "@api/MemberListDecorators";
+import { addDecoration, removeDecoration } from "@api/MessageDecorations";
+import { Settings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { findByCodeLazy } from "@webpack";
-import { PresenceStore, Tooltip } from "@webpack/common";
+import { findByCodeLazy, findStoreLazy } from "@webpack";
+import { PresenceStore, Tooltip, UserStore } from "@webpack/common";
 import { User } from "discord-types/general";
 
+const SessionsStore = findStoreLazy("SessionsStore");
+
 function Icon(path: string, viewBox = "0 0 24 24") {
-    return ({ color, tooltip }: { color: string; tooltip: string; }) => (
+    return ({ color, tooltip, wantMargin }: { color: string; tooltip: string; wantMargin: boolean; }) => (
         <Tooltip text={tooltip} >
             {(tooltipProps: any) => (
                 <svg
                     {...tooltipProps}
-                    height="18"
-                    width="18"
+                    height="20"
+                    width="20"
                     viewBox={viewBox}
                     fill={color}
+                    style={{
+                        marginLeft: wantMargin ? 4 : 0,
+                        verticalAlign: "top",
+                        position: "relative",
+                        top: wantMargin ? 1 : 0,
+                    }}
                 >
                     <path d={path} />
                 </svg>
@@ -50,17 +61,41 @@ const Icons = {
 };
 type Platform = keyof typeof Icons;
 
-const getStatusColor = findByCodeLazy("STATUS_YELLOW", "TWITCH", "STATUS_GREY");
+const getStatusColor = findByCodeLazy(".TWITCH", ".STREAMING", ".INVISIBLE");
 
-const PlatformIcon = ({ platform, status }: { platform: Platform, status: string; }) => {
+const PlatformIcon = ({ platform, status, wantMargin }: { platform: Platform, status: string; wantMargin: boolean; }) => {
     const tooltip = platform[0].toUpperCase() + platform.slice(1);
     const Icon = Icons[platform] ?? Icons.desktop;
 
-    return <Icon color={`var(--${getStatusColor(status)}`} tooltip={tooltip} />;
+    return <Icon color={`var(--${getStatusColor(status)}`} tooltip={tooltip} wantMargin={wantMargin} />;
 };
 
-const PlatformIndicator = ({ user }: { user: User; }) => {
+const getStatus = (id: string): Record<Platform, string> => PresenceStore.getState()?.clientStatuses?.[id];
+
+const PlatformIndicator = ({ user, wantMargin = true }: { user: User; wantMargin?: boolean; }) => {
     if (!user || user.bot) return null;
+
+    if (user.id === UserStore.getCurrentUser().id) {
+        const sessions = SessionsStore.getSessions();
+        if (typeof sessions !== "object") return null;
+        const sortedSessions = Object.values(sessions).sort(({ status: a }: any, { status: b }: any) => {
+            if (a === b) return 0;
+            if (a === "online") return 1;
+            if (b === "online") return -1;
+            if (a === "idle") return 1;
+            if (b === "idle") return -1;
+            return 0;
+        });
+
+        const ownStatus = Object.values(sortedSessions).reduce((acc: any, curr: any) => {
+            if (curr.clientInfo.client !== "unknown")
+                acc[curr.clientInfo.client] = curr.status;
+            return acc;
+        }, {});
+
+        const { clientStatuses } = PresenceStore.getState();
+        clientStatuses[UserStore.getCurrentUser().id] = ownStatus;
+    }
 
     const status = PresenceStore.getState()?.clientStatuses?.[user.id] as Record<Platform, string>;
     if (!status) return null;
@@ -70,84 +105,150 @@ const PlatformIndicator = ({ user }: { user: User; }) => {
             key={platform}
             platform={platform as Platform}
             status={status}
+            wantMargin={wantMargin}
         />
     ));
 
     if (!icons.length) return null;
 
     return (
-        <div
-            className="vc-platform-indicator"
-            style={{
-                display: "flex", alignItems: "center", marginLeft: "4px", gap: "4px"
-            }}
-        >
+        <span className="vc-platform-indicator">
             {icons}
-        </div>
+        </span>
     );
+};
+
+const badge: ProfileBadge = {
+    component: p => <PlatformIndicator {...p} wantMargin={false} />,
+    position: BadgePosition.START,
+    shouldShow: userInfo => !!Object.keys(getStatus(userInfo.user.id) ?? {}).length,
+    key: "indicator"
+};
+
+const indicatorLocations = {
+    list: {
+        description: "In the member list",
+        onEnable: () => addDecorator("platform-indicator", props =>
+            <ErrorBoundary noop>
+                <PlatformIndicator user={props.user} />
+            </ErrorBoundary>
+        ),
+        onDisable: () => removeDecorator("platform-indicator")
+    },
+    badges: {
+        description: "In user profiles, as badges",
+        onEnable: () => addBadge(badge),
+        onDisable: () => removeBadge(badge)
+    },
+    messages: {
+        description: "Inside messages",
+        onEnable: () => addDecoration("platform-indicator", props =>
+            <ErrorBoundary noop>
+                <PlatformIndicator user={props.message?.author} />
+            </ErrorBoundary>
+        ),
+        onDisable: () => removeDecoration("platform-indicator")
+    }
 };
 
 export default definePlugin({
     name: "PlatformIndicators",
     description: "Adds platform indicators (Desktop, Mobile, Web...) to users",
-    authors: [Devs.kemo],
+    authors: [Devs.kemo, Devs.TheSun, Devs.Nuckyz],
+    dependencies: ["MessageDecorationsAPI", "MemberListDecoratorsAPI"],
+
+    start() {
+        const settings = Settings.plugins.PlatformIndicators;
+        const { displayMode } = settings;
+
+        // transfer settings from the old ones, which had a select menu instead of booleans
+        if (displayMode) {
+            if (displayMode !== "both") settings[displayMode] = true;
+            else {
+                settings.list = true;
+                settings.badges = true;
+            }
+            settings.messages = true;
+            delete settings.displayMode;
+        }
+
+        Object.entries(indicatorLocations).forEach(([key, value]) => {
+            if (settings[key]) value.onEnable();
+        });
+    },
+
+    stop() {
+        Object.entries(indicatorLocations).forEach(([_, value]) => {
+            value.onDisable();
+        });
+    },
 
     patches: [
         {
-            // Server member list decorators
-            find: "this.renderPremium()",
-            predicate: () => ["both", "list"].includes(Settings.plugins.PlatformIndicators.displayMode),
-            replacement: {
-                match: /this.renderPremium\(\)[^\]]*?\]/,
-                replace: "$&.concat(Vencord.Plugins.plugins.PlatformIndicators.renderPlatformIndicators(this.props))"
-            }
+            find: ".Masks.STATUS_ONLINE_MOBILE",
+            predicate: () => Settings.plugins.PlatformIndicators.colorMobileIndicator,
+            replacement: [
+                {
+                    // Return the STATUS_ONLINE_MOBILE mask if the user is on mobile, no matter the status
+                    match: /(?<=return \i\.\i\.Masks\.STATUS_TYPING;)(.+?)(\i)\?(\i\.\i\.Masks\.STATUS_ONLINE_MOBILE):/,
+                    replace: (_, rest, isMobile, mobileMask) => `if(${isMobile})return ${mobileMask};${rest}`
+                },
+                {
+                    // Return the STATUS_ONLINE_MOBILE mask if the user is on mobile, no matter the status
+                    match: /(switch\(\i\){case \i\.\i\.ONLINE:return )(\i)\?({.+?}):/,
+                    replace: (_, rest, isMobile, component) => `if(${isMobile})return${component};${rest}`
+                }
+            ]
         },
         {
-            // Dm list decorators
-            find: "PrivateChannel.renderAvatar",
-            predicate: () => ["both", "list"].includes(Settings.plugins.PlatformIndicators.displayMode),
-            replacement: {
-                match: /(subText:(.{1,3})\..+?decorators:)(.+?:null)/,
-                replace: "$1[$3].concat(Vencord.Plugins.plugins.PlatformIndicators.renderPlatformIndicators($2.props))"
-            }
+            find: ".AVATAR_STATUS_MOBILE_16;",
+            predicate: () => Settings.plugins.PlatformIndicators.colorMobileIndicator,
+            replacement: [
+                {
+                    // Return the AVATAR_STATUS_MOBILE size mask if the user is on mobile, no matter the status
+                    match: /\i===\i\.\i\.ONLINE&&(?=.{0,70}\.AVATAR_STATUS_MOBILE_16;)/,
+                    replace: ""
+                },
+                {
+                    // Fix sizes for mobile indicators which aren't online
+                    match: /(?<=\(\i\.status,)(\i)(?=,(\i),\i\))/,
+                    replace: (_, userStatus, isMobile) => `${isMobile}?"online":${userStatus}`
+                },
+                {
+                    // Make isMobile true no matter the status
+                    match: /(?<=\i&&!\i)&&\i===\i\.\i\.ONLINE/,
+                    replace: ""
+                }
+            ]
         },
         {
-            // User badges
-            find: "Messages.PROFILE_USER_BADGES",
-            predicate: () => ["both", "badges"].includes(Settings.plugins.PlatformIndicators.displayMode),
+            find: "isMobileOnline=function",
+            predicate: () => Settings.plugins.PlatformIndicators.colorMobileIndicator,
             replacement: {
-                match: /(Messages\.PROFILE_USER_BADGES,role:"group",children:)(.+?\.key\)\}\)\))/,
-                replace: "$1[Vencord.Plugins.plugins.PlatformIndicators.renderPlatformIndicators(e)].concat($2)"
+                // Make isMobileOnline return true no matter what is the user status
+                match: /(?<=\i\[\i\.\i\.MOBILE\])===\i\.\i\.ONLINE/,
+                replace: "!= null"
             }
         }
     ],
 
-    renderPlatformIndicators: ({ user }: { user: User; }) => (
-        <ErrorBoundary noop>
-            <PlatformIndicator user={user} />
-        </ErrorBoundary>
-    ),
-
     options: {
-        displayMode: {
-            type: OptionType.SELECT,
-            description: "Where to display the platform indicators",
-            restartNeeded: true,
-            options: [
-                {
-                    label: "Member List & Badges",
-                    value: "both",
+        ...Object.fromEntries(
+            Object.entries(indicatorLocations).map(([key, value]) => {
+                return [key, {
+                    type: OptionType.BOOLEAN,
+                    description: `Show indicators ${value.description.toLowerCase()}`,
+                    // onChange doesn't give any way to know which setting was changed, so restart required
+                    restartNeeded: true,
                     default: true
-                },
-                {
-                    label: "Member List Only",
-                    value: "list"
-                },
-                {
-                    label: "Badges Only",
-                    value: "badges"
-                }
-            ]
-        },
+                }];
+            })
+        ),
+        colorMobileIndicator: {
+            type: OptionType.BOOLEAN,
+            description: "Whether to make the mobile indicator match the color of the user status.",
+            default: true,
+            restartNeeded: true
+        }
     }
 });

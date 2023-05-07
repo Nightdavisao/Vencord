@@ -17,38 +17,48 @@
 */
 
 import { debounce } from "@utils/debounce";
-import IpcEvents from "@utils/IpcEvents";
-import electron, { contextBridge, ipcRenderer, webFrame } from "electron";
-import { readFileSync } from "fs";
+import { contextBridge, webFrame } from "electron";
+import { readFileSync, watch } from "fs";
 import { join } from "path";
 
 import VencordNative from "./VencordNative";
 
-if (electron.desktopCapturer === void 0) {
-    // Fix for desktopCapturer being main only in Electron 17+
-    // Discord accesses this in discord_desktop_core (DiscordNative.desktopCapture.getDesktopCaptureSources)
-    // and errors with cannot "read property getSources() of undefined"
-    // see discord_desktop_core/app/discord_native/renderer/desktopCapture.js
-    const electronPath = require.resolve("electron");
-    delete require.cache[electronPath]!.exports;
-    require.cache[electronPath]!.exports = {
-        ...electron,
-        desktopCapturer: {
-            getSources: opts => ipcRenderer.invoke(IpcEvents.GET_DESKTOP_CAPTURE_SOURCES, opts)
-        }
-    };
-}
-
 contextBridge.exposeInMainWorld("VencordNative", VencordNative);
 
+// Discord
 if (location.protocol !== "data:") {
-    // Discord
-    webFrame.executeJavaScript(readFileSync(join(__dirname, "renderer.js"), "utf-8"));
-    require(process.env.DISCORD_PRELOAD!);
-} else {
-    // Monaco Popout
-    contextBridge.exposeInMainWorld("setCss", debounce(s => VencordNative.ipc.invoke(IpcEvents.SET_QUICK_CSS, s)));
-    contextBridge.exposeInMainWorld("getCurrentCss", () => VencordNative.ipc.invoke(IpcEvents.GET_QUICK_CSS));
+    // #region cssInsert
+    const rendererCss = join(__dirname, "renderer.css");
+
+    const style = document.createElement("style");
+    style.id = "vencord-css-core";
+    style.textContent = readFileSync(rendererCss, "utf-8");
+
+    if (document.readyState === "complete") {
+        document.documentElement.appendChild(style);
+    } else {
+        document.addEventListener("DOMContentLoaded", () => document.documentElement.appendChild(style), {
+            once: true
+        });
+    }
+
+    if (IS_DEV) {
+        // persistent means keep process running if watcher is the only thing still running
+        // which we obviously don't want
+        watch(rendererCss, { persistent: false }, () => {
+            document.getElementById("vencord-css-core")!.textContent = readFileSync(rendererCss, "utf-8");
+        });
+    }
+    // #endregion
+
+    if (process.env.DISCORD_PRELOAD) {
+        webFrame.executeJavaScript(readFileSync(join(__dirname, "renderer.js"), "utf-8"));
+        require(process.env.DISCORD_PRELOAD);
+    }
+} // Monaco popout
+else {
+    contextBridge.exposeInMainWorld("setCss", debounce(VencordNative.quickCss.set));
+    contextBridge.exposeInMainWorld("getCurrentCss", VencordNative.quickCss.get);
     // shrug
     contextBridge.exposeInMainWorld("getTheme", () => "vs-dark");
 }

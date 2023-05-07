@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/settings";
+import { Settings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 
@@ -43,12 +43,12 @@ export default definePlugin({
 
     patches: [
         {
-            find: "().embedWrapper,embed",
+            find: ".embedWrapper,embed",
             replacement: [{
-                match: /(\.renderEmbed=.+?(.)=.\.props)(.+?\(\)\.embedWrapper)/g,
+                match: /(\.renderEmbed=.+?(.)=.\.props)(.+?\.embedWrapper)/g,
                 replace: "$1,vcProps=$2$3+(vcProps.channel.nsfw?' vc-nsfw-img':'')"
             }, {
-                match: /(\.renderAttachments=.+?(.)=this\.props)(.+?\(\)\.embedWrapper)/g,
+                match: /(\.renderAttachments=.+?(.)=this\.props)(.+?\.embedWrapper)/g,
                 replace: "$1,vcProps=$2$3+(vcProps.channel.nsfw?' vc-nsfw-img':'')"
             }]
         }

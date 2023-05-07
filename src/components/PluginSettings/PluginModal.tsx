@@ -17,12 +17,14 @@
 */
 
 import { generateId } from "@api/Commands";
-import { useSettings } from "@api/settings";
+import { useSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
-import { LazyComponent } from "@utils/misc";
-import { ModalContent, ModalFooter, ModalHeader, ModalProps, ModalRoot, ModalSize } from "@utils/modal";
-import { proxyLazy } from "@utils/proxyLazy";
+import { proxyLazy } from "@utils/lazy";
+import { Margins } from "@utils/margins";
+import { classes } from "@utils/misc";
+import { ModalCloseButton, ModalContent, ModalFooter, ModalHeader, ModalProps, ModalRoot, ModalSize } from "@utils/modal";
+import { LazyComponent } from "@utils/react";
 import { OptionType, Plugin } from "@utils/types";
 import { findByCode, findByPropsLazy } from "@webpack";
 import { Button, FluxDispatcher, Forms, React, Text, Tooltip, UserStore, UserUtils } from "@webpack/common";
@@ -84,6 +86,8 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
 
     const canSubmit = () => Object.values(errors).every(e => !e);
 
+    const hasSettings = Boolean(pluginSettings && plugin.options);
+
     React.useEffect(() => {
         (async () => {
             for (const user of plugin.authors.slice(0, 6)) {
@@ -121,33 +125,34 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
     }
 
     function renderSettings() {
-        if (!pluginSettings || !plugin.options) {
+        if (!hasSettings || !plugin.options) {
             return <Forms.FormText>There are no settings for this plugin.</Forms.FormText>;
+        } else {
+            const options = Object.entries(plugin.options).map(([key, setting]) => {
+                function onChange(newValue: any) {
+                    setTempSettings(s => ({ ...s, [key]: newValue }));
+                }
+
+                function onError(hasError: boolean) {
+                    setErrors(e => ({ ...e, [key]: hasError }));
+                }
+
+                const Component = Components[setting.type];
+                return (
+                    <Component
+                        id={key}
+                        key={key}
+                        option={setting}
+                        onChange={onChange}
+                        onError={onError}
+                        pluginSettings={pluginSettings}
+                        definedSettings={plugin.settings}
+                    />
+                );
+            });
+
+            return <Flex flexDirection="column" style={{ gap: 12, marginBottom: 16 }}>{options}</Flex>;
         }
-
-        const options = Object.entries(plugin.options).map(([key, setting]) => {
-            function onChange(newValue: any) {
-                setTempSettings(s => ({ ...s, [key]: newValue }));
-            }
-
-            function onError(hasError: boolean) {
-                setErrors(e => ({ ...e, [key]: hasError }));
-            }
-
-            const Component = Components[setting.type];
-            return (
-                <Component
-                    id={key}
-                    key={key}
-                    option={setting}
-                    onChange={onChange}
-                    onError={onError}
-                    pluginSettings={pluginSettings}
-                />
-            );
-        });
-
-        return <Flex flexDirection="column" style={{ gap: 12 }}>{options}</Flex>;
     }
 
     function renderMoreUsers(_label: string, count: number) {
@@ -171,15 +176,17 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
     }
 
     return (
-        <ModalRoot transitionState={transitionState} size={ModalSize.MEDIUM}>
-            <ModalHeader>
-                <Text variant="heading-md/bold">{plugin.name}</Text>
+        <ModalRoot transitionState={transitionState} size={ModalSize.MEDIUM} className="vc-text-selectable">
+            <ModalHeader separator={false}>
+                <Text variant="heading-lg/semibold" style={{ flexGrow: 1 }}>{plugin.name}</Text>
+                <ModalCloseButton onClick={onClose} />
             </ModalHeader>
-            <ModalContent style={{ marginBottom: 8, marginTop: 8 }}>
+            <ModalContent>
                 <Forms.FormSection>
                     <Forms.FormTitle tag="h3">About {plugin.name}</Forms.FormTitle>
                     <Forms.FormText>{plugin.description}</Forms.FormText>
-                    <div style={{ marginTop: 8, marginBottom: 8, width: "fit-content" }}>
+                    <Forms.FormTitle tag="h3" style={{ marginTop: 8, marginBottom: 0 }}>Authors</Forms.FormTitle>
+                    <div style={{ width: "fit-content", marginBottom: 8 }}>
                         <UserSummaryItem
                             users={authors}
                             count={plugin.authors.length}
@@ -193,7 +200,7 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
                     </div>
                 </Forms.FormSection>
                 {!!plugin.settingsAboutComponent && (
-                    <div style={{ marginBottom: 8 }}>
+                    <div className={classes(Margins.bottom8, "vc-text-selectable")}>
                         <Forms.FormSection>
                             <ErrorBoundary message="An error occurred while rendering this plugin's custom InfoComponent">
                                 <plugin.settingsAboutComponent tempSettings={tempSettings} />
@@ -206,13 +213,14 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
                     {renderSettings()}
                 </Forms.FormSection>
             </ModalContent>
-            <ModalFooter>
+            {hasSettings && <ModalFooter>
                 <Flex flexDirection="column" style={{ width: "100%" }}>
                     <Flex style={{ marginLeft: "auto" }}>
                         <Button
                             onClick={onClose}
                             size={Button.Sizes.SMALL}
-                            color={Button.Colors.RED}
+                            color={Button.Colors.WHITE}
+                            look={Button.Looks.LINK}
                         >
                             Cancel
                         </Button>
@@ -233,7 +241,7 @@ export default function PluginModal({ plugin, onRestartNeeded, onClose, transiti
                     </Flex>
                     {saveError && <Text variant="text-md/semibold" style={{ color: "var(--text-danger)" }}>Error while saving: {saveError}</Text>}
                 </Flex>
-            </ModalFooter>
+            </ModalFooter>}
         </ModalRoot>
     );
 }

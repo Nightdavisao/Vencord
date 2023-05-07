@@ -17,9 +17,9 @@
 */
 
 import { exec, execSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { readdir, readFile } from "fs/promises";
-import { join } from "path";
+import { join, relative } from "path";
 import { promisify } from "util";
 
 export const watch = process.argv.includes("--watch");
@@ -33,9 +33,11 @@ export const banner = {
 `.trim()
 };
 
+const isWeb = process.argv.slice(0, 2).some(f => f.endsWith("buildWeb.mjs"));
+
 // https://github.com/evanw/esbuild/issues/619#issuecomment-751995294
 /**
- * @type {esbuild.Plugin}
+ * @type {import("esbuild").Plugin}
  */
 export const makeAllPackagesExternalPlugin = {
     name: "make-all-packages-external",
@@ -46,9 +48,9 @@ export const makeAllPackagesExternalPlugin = {
 };
 
 /**
- * @type {esbuild.Plugin}
+ * @type {(kind: "web" | "discordDesktop" | "vencordDesktop") => import("esbuild").Plugin}
  */
-export const globPlugins = {
+export const globPlugins = kind => ({
     name: "glob-plugins",
     setup: build => {
         const filter = /^~plugins$/;
@@ -68,11 +70,20 @@ export const globPlugins = {
                 if (!existsSync(`./src/${dir}`)) continue;
                 const files = await readdir(`./src/${dir}`);
                 for (const file of files) {
-                    if (file === "index.ts") {
-                        continue;
+                    if (file.startsWith(".")) continue;
+                    if (file === "index.ts") continue;
+                    const fileBits = file.split(".");
+                    if (fileBits.length > 2 && ["ts", "tsx"].includes(fileBits.at(-1))) {
+                        const mod = fileBits.at(-2);
+                        if (mod === "dev" && !watch) continue;
+                        if (mod === "web" && kind === "discordDesktop") continue;
+                        if (mod === "desktop" && kind === "web") continue;
+                        if (mod === "discordDesktop" && kind !== "discordDesktop") continue;
+                        if (mod === "vencordDesktop" && kind !== "vencordDesktop") continue;
                     }
+
                     const mod = `p${i}`;
-                    code += `import ${mod} from "./${dir}/${file.replace(/.tsx?$/, "")}";\n`;
+                    code += `import ${mod} from "./${dir}/${file.replace(/\.tsx?$/, "")}";\n`;
                     plugins += `[${mod}.name]:${mod},\n`;
                     i++;
                 }
@@ -84,10 +95,10 @@ export const globPlugins = {
             };
         });
     }
-};
+});
 
 /**
- * @type {esbuild.Plugin}
+ * @type {import("esbuild").Plugin}
  */
 export const gitHashPlugin = {
     name: "git-hash-plugin",
@@ -103,7 +114,7 @@ export const gitHashPlugin = {
 };
 
 /**
- * @type {esbuild.Plugin}
+ * @type {import("esbuild").Plugin}
  */
 export const gitRemotePlugin = {
     name: "git-remote-plugin",
@@ -125,7 +136,7 @@ export const gitRemotePlugin = {
 };
 
 /**
- * @type {esbuild.Plugin}
+ * @type {import("esbuild").Plugin}
  */
 export const fileIncludePlugin = {
     name: "file-include-plugin",
@@ -147,6 +158,31 @@ export const fileIncludePlugin = {
     }
 };
 
+const styleModule = readFileSync("./scripts/build/module/style.js", "utf-8");
+/**
+ * @type {import("esbuild").Plugin}
+ */
+export const stylePlugin = {
+    name: "style-plugin",
+    setup: ({ onResolve, onLoad }) => {
+        onResolve({ filter: /\.css\?managed$/, namespace: "file" }, ({ path, resolveDir }) => ({
+            path: relative(process.cwd(), join(resolveDir, path.replace("?managed", ""))),
+            namespace: "managed-style",
+        }));
+        onLoad({ filter: /\.css$/, namespace: "managed-style" }, async ({ path }) => {
+            const css = await readFile(path, "utf-8");
+            const name = relative(process.cwd(), path).replaceAll("\\", "/");
+
+            return {
+                loader: "js",
+                contents: styleModule
+                    .replaceAll("STYLE_SOURCE", JSON.stringify(css))
+                    .replaceAll("STYLE_NAME", JSON.stringify(name))
+            };
+        });
+    }
+};
+
 /**
  * @type {import("esbuild").BuildOptions}
  */
@@ -158,8 +194,8 @@ export const commonOpts = {
     sourcemap: watch ? "inline" : "",
     legalComments: "linked",
     banner,
-    plugins: [fileIncludePlugin, gitHashPlugin, gitRemotePlugin],
-    external: ["~plugins", "~git-hash", "~git-remote"],
+    plugins: [fileIncludePlugin, gitHashPlugin, gitRemotePlugin, stylePlugin],
+    external: ["~plugins", "~git-hash", "~git-remote", "/assets/*"],
     inject: ["./scripts/build/inject/react.mjs"],
     jsxFactory: "VencordCreateElement",
     jsxFragment: "VencordFragment",

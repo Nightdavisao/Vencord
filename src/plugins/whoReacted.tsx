@@ -18,8 +18,9 @@
 
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs } from "@utils/constants";
-import { LazyComponent, sleep, useForceUpdater } from "@utils/misc";
+import { sleep } from "@utils/misc";
 import { Queue } from "@utils/Queue";
+import { LazyComponent, useForceUpdater } from "@utils/react";
 import definePlugin from "@utils/types";
 import { findByCode, findByPropsLazy } from "@webpack";
 import { ChannelStore, FluxDispatcher, React, RestAPI, Tooltip } from "@webpack/common";
@@ -32,12 +33,13 @@ const ReactionStore = findByPropsLazy("getReactions");
 
 const queue = new Queue();
 
-function fetchReactions(msg: Message, emoji: ReactionEmoji) {
+function fetchReactions(msg: Message, emoji: ReactionEmoji, type: number) {
     const key = emoji.name + (emoji.id ? `:${emoji.id}` : "");
     return RestAPI.get({
         url: `/channels/${msg.channel_id}/messages/${msg.id}/reactions/${key}`,
         query: {
-            limit: 100
+            limit: 100,
+            type
         },
         oldFormErrors: true
     })
@@ -46,18 +48,19 @@ function fetchReactions(msg: Message, emoji: ReactionEmoji) {
             channelId: msg.channel_id,
             messageId: msg.id,
             users: res.body,
-            emoji
+            emoji,
+            reactionType: type
         }))
         .catch(console.error)
         .finally(() => sleep(250));
 }
 
-function getReactionsWithQueue(msg: Message, e: ReactionEmoji) {
-    const key = `${msg.id}:${e.name}:${e.id ?? ""}`;
+function getReactionsWithQueue(msg: Message, e: ReactionEmoji, type: number) {
+    const key = `${msg.id}:${e.name}:${e.id ?? ""}:${type}`;
     const cache = ReactionStore.__getLocalVars().reactions[key] ??= { fetched: false, users: {} };
     if (!cache.fetched) {
         queue.unshift(() =>
-            fetchReactions(msg, e)
+            fetchReactions(msg, e, type)
         );
         cache.fetched = true;
     }
@@ -83,16 +86,20 @@ function makeRenderMoreUsers(users: User[]) {
     };
 }
 
+function handleClickAvatar(event: React.MouseEvent<HTMLElement, MouseEvent>) {
+    event.stopPropagation();
+}
+
 export default definePlugin({
     name: "WhoReacted",
     description: "Renders the Avatars of reactors",
-    authors: [Devs.Ven],
+    authors: [Devs.Ven, Devs.KannaDev],
 
     patches: [{
         find: ",reactionRef:",
         replacement: {
-            match: /((.)=(.{1,3})\.hideCount)(,.+?reactionCount.+?\}\))/,
-            replace: "$1,whoReactedProps=$3$4,$2?null:Vencord.Plugins.plugins.WhoReacted.renderUsers(whoReactedProps)"
+            match: /(?<=(\i)=(\i)\.hideCount,)(.+?reactionCount.+?\}\))/,
+            replace: (_, hideCount, props, rest) => `whoReactedProps=${props},${rest},${hideCount}?null:$self.renderUsers(whoReactedProps)`
         }
     }],
 
@@ -104,7 +111,7 @@ export default definePlugin({
         );
     },
 
-    _renderUsers({ message, emoji }: RootObject) {
+    _renderUsers({ message, emoji, type }: RootObject) {
         const forceUpdate = useForceUpdater();
         React.useEffect(() => {
             const cb = (e: any) => {
@@ -116,22 +123,31 @@ export default definePlugin({
             return () => FluxDispatcher.unsubscribe("MESSAGE_REACTION_ADD_USERS", cb);
         }, [message.id]);
 
-        const reactions = getReactionsWithQueue(message, emoji);
+        const reactions = getReactionsWithQueue(message, emoji, type);
         const users = Object.values(reactions).filter(Boolean) as User[];
+
+        for (const user of users) {
+            FluxDispatcher.dispatch({
+                type: "USER_UPDATE",
+                user
+            });
+        }
 
         return (
             <div
                 style={{ marginLeft: "0.5em", transform: "scale(0.9)" }}
             >
-                <UserSummaryItem
-                    users={users}
-                    guildId={ChannelStore.getChannel(message.channel_id)?.guild_id}
-                    renderIcon={false}
-                    max={5}
-                    showDefaultAvatarsForNullUsers
-                    showUserPopout
-                    renderMoreUsers={makeRenderMoreUsers(users)}
-                />
+                <div onClick={handleClickAvatar}>
+                    <UserSummaryItem
+                        users={users}
+                        guildId={ChannelStore.getChannel(message.channel_id)?.guild_id}
+                        renderIcon={false}
+                        max={5}
+                        showDefaultAvatarsForNullUsers
+                        showUserPopout
+                        renderMoreUsers={makeRenderMoreUsers(users)}
+                    />
+                </div>
             </div>
         );
     }

@@ -16,13 +16,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import "./spotifyStyles.css";
+
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { Link } from "@components/Link";
 import { debounce } from "@utils/debounce";
-import { classes, LazyComponent } from "@utils/misc";
-import { filters, find, findByCodeLazy } from "@webpack";
-import { ContextMenu, FluxDispatcher, Forms, Menu, React } from "@webpack/common";
+import { classes, copyWithToast } from "@utils/misc";
+import { ContextMenu, FluxDispatcher, Forms, Menu, React, useEffect, useState, useStateFromStores } from "@webpack/common";
 
 import { SpotifyStore, Track } from "./SpotifyStore";
 
@@ -34,14 +35,6 @@ function msToHuman(ms: number) {
     const s = Math.floor((minutes - m) * 60);
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
-
-const useStateFromStores: <T>(
-    stores: typeof SpotifyStore[],
-    mapper: () => T,
-    idk?: null,
-    compare?: (old: T, newer: T) => boolean
-) => T
-    = findByCodeLazy("useStateFromStores");
 
 function Svg(path: string, label: string) {
     return () => (
@@ -78,6 +71,37 @@ function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
             {props.children}
         </button>
     );
+}
+
+function CopyContextMenu({ name, path }: { name: string; path: string; }) {
+    const copyId = `spotify-copy-${name}`;
+    const openId = `spotify-open-${name}`;
+
+    return (
+        <Menu.Menu
+            navId={`spotify-${name}-menu`}
+            onClose={() => FluxDispatcher.dispatch({ type: "CONTEXT_MENU_CLOSE" })}
+            aria-label={`Spotify ${name} Menu`}
+        >
+            <Menu.MenuItem
+                key={copyId}
+                id={copyId}
+                label={`Copy ${name} Link`}
+                action={() => copyWithToast("https://open.spotify.com" + path)}
+            />
+            <Menu.MenuItem
+                key={openId}
+                id={openId}
+                label={`Open ${name} in Spotify`}
+                action={() => SpotifyStore.openExternal(path)}
+            />
+        </Menu.Menu>
+    );
+}
+
+function makeContextMenu(name: string, path: string) {
+    return (e: React.MouseEvent<HTMLElement, MouseEvent>) =>
+        ContextMenu.open(e, () => <CopyContextMenu name={name} path={path} />);
 }
 
 function Controls() {
@@ -129,11 +153,6 @@ const seek = debounce((v: number) => {
     SpotifyStore.seek(v);
 });
 
-const Slider = LazyComponent(() => {
-    const filter = filters.byCode("sliderContainer");
-    return find(m => m.render && filter(m.render));
-});
-
 function SeekBar() {
     const { duration } = SpotifyStore.track!;
 
@@ -142,10 +161,10 @@ function SeekBar() {
         () => [SpotifyStore.mPosition, SpotifyStore.isSettingPosition, SpotifyStore.isPlaying]
     );
 
-    const [position, setPosition] = React.useState(storePosition);
+    const [position, setPosition] = useState(storePosition);
 
     // eslint-disable-next-line consistent-return
-    React.useEffect(() => {
+    useEffect(() => {
         if (isPlaying && !isSettingPosition) {
             setPosition(SpotifyStore.position);
             const interval = setInterval(() => {
@@ -165,7 +184,7 @@ function SeekBar() {
             >
                 {msToHuman(position)}
             </Forms.FormText>
-            <Slider
+            <Menu.MenuSliderControl
                 minValue={0}
                 maxValue={duration}
                 value={position}
@@ -192,7 +211,7 @@ function AlbumContextMenu({ track }: { track: Track; }) {
     const volume = useStateFromStores([SpotifyStore], () => SpotifyStore.volume);
 
     return (
-        <Menu.ContextMenu
+        <Menu.Menu
             navId="spotify-album-menu"
             onClose={() => FluxDispatcher.dispatch({ type: "CONTEXT_MENU_CLOSE" })}
             aria-label="Spotify Album Menu"
@@ -215,7 +234,7 @@ function AlbumContextMenu({ track }: { track: Track; }) {
                 key="spotify-volume"
                 label="Volume"
                 control={(props, ref) => (
-                    <Slider
+                    <Menu.MenuSliderControl
                         {...props}
                         ref={ref}
                         value={volume}
@@ -225,14 +244,14 @@ function AlbumContextMenu({ track }: { track: Track; }) {
                     />
                 )}
             />
-        </Menu.ContextMenu>
+        </Menu.Menu>
     );
 }
 
 function Info({ track }: { track: Track; }) {
     const img = track?.album?.image;
 
-    const [coverExpanded, setCoverExpanded] = React.useState(false);
+    const [coverExpanded, setCoverExpanded] = useState(false);
 
     const i = (
         <>
@@ -269,6 +288,7 @@ function Info({ track }: { track: Track; }) {
                     onClick={track.id ? () => {
                         SpotifyStore.openExternal(`/track/${track.id}`);
                     } : void 0}
+                    onContextMenu={track.id ? makeContextMenu("Song", `/track/${track.id}`) : void 0}
                 >
                     {track.name}
                 </Forms.FormText>
@@ -283,6 +303,7 @@ function Info({ track }: { track: Track; }) {
                                     href={`https://open.spotify.com/artist/${a.id}`}
                                     style={{ fontSize: "inherit" }}
                                     title={a.name}
+                                    onContextMenu={makeContextMenu("Artist", `/artist/${a.id}`)}
                                 >
                                     {a.name}
                                 </Link>
@@ -301,6 +322,7 @@ function Info({ track }: { track: Track; }) {
                             disabled={!track.album.id}
                             style={{ fontSize: "inherit" }}
                             title={track.album.name}
+                            onContextMenu={makeContextMenu("Album", `/album/${track.album.id}`)}
                         >
                             {track.album.name}
                         </Link>
@@ -327,7 +349,7 @@ export function Player() {
     );
 
     const isPlaying = useStateFromStores([SpotifyStore], () => SpotifyStore.isPlaying);
-    const [shouldHide, setShouldHide] = React.useState(false);
+    const [shouldHide, setShouldHide] = useState(false);
 
     // Hide player after 5 minutes of inactivity
     // eslint-disable-next-line consistent-return
@@ -344,10 +366,10 @@ export function Player() {
 
     return (
         <ErrorBoundary fallback={() => (
-            <>
-                <Forms.FormText>Failed to render Spotify Modal :(</Forms.FormText>
-                <Forms.FormText>Check the console for errors</Forms.FormText>
-            </>
+            <div className="vc-spotify-fallback">
+                <p>Failed to render Spotify Modal :(</p>
+                <p >Check the console for errors</p>
+            </div>
         )}>
             <div id={cl("player")}>
                 <Info track={track} />

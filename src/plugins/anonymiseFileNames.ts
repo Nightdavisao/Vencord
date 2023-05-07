@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/settings";
+import { Settings } from "@api/Settings";
 import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 
@@ -36,7 +36,7 @@ export default definePlugin({
             replacement: {
                 match: /uploadFiles:(.{1,2}),/,
                 replace:
-                    "uploadFiles:(...args)=>(args[0].uploads.forEach(f=>f.filename=Vencord.Plugins.plugins.AnonymiseFileNames.anonymise(f.filename)),$1(...args)),",
+                    "uploadFiles:(...args)=>(args[0].uploads.forEach(f=>f.filename=$self.anonymise(f.filename)),$1(...args)),",
             },
         },
     ],

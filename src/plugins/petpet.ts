@@ -19,7 +19,7 @@
 import { ApplicationCommandInputType, ApplicationCommandOptionType, Argument, CommandContext, findOption, sendBotMessage } from "@api/Commands";
 import { Devs } from "@utils/constants";
 import { getGifEncoder } from "@utils/dependencies";
-import { makeLazy } from "@utils/misc";
+import { makeLazy } from "@utils/lazy";
 import definePlugin from "@utils/types";
 import { findByCodeLazy, findByPropsLazy } from "@webpack";
 
@@ -83,7 +83,7 @@ async function resolveImage(options: Argument[], ctx: CommandContext, noServerPf
 
 export default definePlugin({
     name: "petpet",
-    description: "headpet a cutie",
+    description: "Adds a /petpet slash command to create headpet gifs from any image",
     authors: [Devs.Ven],
     dependencies: ["CommandsAPI"],
     commands: [
@@ -175,8 +175,8 @@ export default definePlugin({
                 gif.finish();
                 const file = new File([gif.bytesView()], "petpet.gif", { type: "image/gif" });
                 // Immediately after the command finishes, Discord clears all input, including pending attachments.
-                // Thus, setImmediate is needed to make this execute after Discord cleared the input
-                setImmediate(() => promptToUpload([file], cmdCtx.channel, DRAFT_TYPE));
+                // Thus, setTimeout is needed to make this execute after Discord cleared the input
+                setTimeout(() => promptToUpload([file], cmdCtx.channel, DRAFT_TYPE), 10);
             },
         },
     ]
